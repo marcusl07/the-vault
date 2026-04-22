@@ -1,6 +1,7 @@
 import unittest
 from contextlib import redirect_stderr
 from io import StringIO
+import sys
 import tempfile
 from unittest import mock
 from pathlib import Path
@@ -198,6 +199,62 @@ class BootstrapWikiTests(unittest.TestCase):
             sources={source.path: source for source in sources},
         )
         page.notes = ["Lecture notes on Python abstractions.", "Covered recursion and iterators."]
+
+        result = bw.score_bucket_signals(page)
+
+        self.assertFalse(result.is_bucket_signaled)
+        self.assertEqual(result.reasons, [])
+
+    def test_course_folder_name_is_not_treated_as_archive(self) -> None:
+        self.assertEqual(bw.clean_component("ICS 33"), "ics-33")
+
+    def test_bucket_scoring_structured_course_page_ignores_lecture_shape(self) -> None:
+        sources = [
+            bw.SourceRecord(
+                label="Week 1 Recursion",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/week-1-recursion.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Lecture 1 covered recursion and tracing recursive calls.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+            bw.SourceRecord(
+                label="Week 2 Iterators",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/week-2-iterators.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Lecture 2 covered generators and iterators.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+            bw.SourceRecord(
+                label="Midterm Review",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/midterm-review.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Midterm review topics and practice questions.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+        ]
+        page = bw.Page(
+            slug="ics-33",
+            title="ICS 33",
+            page_type="Concepts",
+            summary_hint="ICS 33",
+            sources={source.path: source for source in sources},
+        )
+        page.rendered_notes_markdown = "\n".join(
+            [
+                "### Week 1",
+                "- Recursion and tracing calls.",
+                "### Week 2",
+                "- Iterators and generators.",
+                "### Midterm Review",
+                "- Practice prompts.",
+            ]
+        )
 
         result = bw.score_bucket_signals(page)
 
@@ -1203,6 +1260,110 @@ class BootstrapWikiTests(unittest.TestCase):
         self.assertEqual(report.atomic_pages, 1)
         self.assertEqual(report.failed_pages, 0)
         self.assertEqual(report.bucket_unsplit_details, [])
+
+    def test_lecture_like_page_skips_split_analysis_and_stays_atomic(self) -> None:
+        sources = [
+            bw.SourceRecord(
+                label="Week 1 Recursion",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/week-1-recursion.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Lecture 1 covered recursion.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+            bw.SourceRecord(
+                label="Week 2 Iterators",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/week-2-iterators.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Lecture 2 covered iterators.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+            bw.SourceRecord(
+                label="Final Review",
+                path="../raw/Apple Notes/Marcus/Archives/ICS 33/final-review.md",
+                status="local_only",
+                raw_content="",
+                cleaned_text="Final review topics.",
+                fetched_summary=None,
+                detected_url=None,
+            ),
+        ]
+        page = bw.Page(
+            slug="ics-33",
+            title="ICS 33",
+            page_type="Concepts",
+            summary_hint="ICS 33",
+            sources={source.path: source for source in sources},
+        )
+        page.rendered_notes_markdown = "### Week 1\n- Recursion.\n### Week 2\n- Iterators."
+        pages = {"ics-33": page}
+
+        with mock.patch.object(bw, "split_preflight_check", return_value=(True, None)):
+            with mock.patch.object(
+                bw,
+                "analyze_page_for_atomic_split",
+                return_value=bw.PageSplitDecision(
+                    is_atomic=False,
+                    candidate_satellite_slugs=["recursion", "iterators", "final-review"],
+                    source_assignments={
+                        "../raw/Apple Notes/Marcus/Archives/ICS 33/week-1-recursion.md": "recursion",
+                        "../raw/Apple Notes/Marcus/Archives/ICS 33/week-2-iterators.md": "iterators",
+                        "../raw/Apple Notes/Marcus/Archives/ICS 33/final-review.md": "final-review",
+                    },
+                ),
+            ) as analyze_mock:
+                stderr = StringIO()
+                with redirect_stderr(stderr):
+                    report = bw.migrate_pages_to_atomic_topics(pages, {}, api_key="token")
+
+        analyze_mock.assert_not_called()
+        self.assertEqual(report.atomic_pages, 1)
+        self.assertEqual(report.analyzed_pages, 0)
+        self.assertEqual(report.split_pages, 0)
+        self.assertEqual(pages["ics-33"].shape, bw.PAGE_SHAPE_ATOMIC)
+        self.assertIn("course lecture guard", stderr.getvalue())
+
+    def test_bootstrap_main_sandbox_keeps_lecture_page_atomic(self) -> None:
+        lecture_notes = {
+            "Week 1 Recursion.md": "# Week 1 Recursion\n\n## Key Ideas\n\n- Recursive functions\n- Base cases\n",
+            "Week 2 Iterators.md": "# Week 2 Iterators\n\n## Key Ideas\n\n- Iterators\n- Generators\n",
+            "Final Review.md": "# Final Review\n\n## Topics\n\n- Recursion\n- Iterators\n- Classes\n",
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            raw_root = root / "raw" / "ICS 33"
+            raw_root.mkdir(parents=True)
+            (root / "wiki").mkdir()
+            for name, content in lecture_notes.items():
+                (raw_root / name).write_text(content, encoding="utf-8")
+
+            with bw.temporary_workspace(root):
+                with mock.patch.dict("os.environ", {"GEMINI_API_KEY": ""}, clear=False):
+                    with mock.patch.object(bw, "split_preflight_check", return_value=(True, None)):
+                        with mock.patch.object(
+                            bw,
+                            "analyze_page_for_atomic_split",
+                            return_value=bw.PageSplitDecision(
+                                is_atomic=False,
+                                candidate_satellite_slugs=["recursion", "iterators", "classes"],
+                                source_assignments={},
+                            ),
+                        ) as analyze_mock:
+                            with mock.patch.object(sys, "argv", ["bootstrap_wiki.py"]):
+                                bw.main()
+
+                analyze_mock.assert_not_called()
+                course_page = (bw.WIKI_ROOT / "ics-33.md").read_text(encoding="utf-8")
+                self.assertIn("# ICS 33", course_page)
+                self.assertIn("## Notes", course_page)
+                self.assertIn("## Sources", course_page)
+                self.assertNotIn("## Connections\n\n- [[recursion]]", course_page)
+                self.assertFalse((bw.WIKI_ROOT / "recursion.md").exists())
+                self.assertIn('bootstrap | completed', (bw.WIKI_ROOT / "log.md").read_text(encoding="utf-8"))
 
     def test_manifest_failed_split_slugs_reads_failure_details(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

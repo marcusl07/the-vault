@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date
 import hashlib
@@ -153,6 +154,15 @@ GENERIC_BUCKET_SLUGS = {
     "recipe",
     "recipes",
 }
+COURSE_PAGE_SLUG_RE = re.compile(r"^[a-z]{2,6}-\d{1,3}[a-z]?$")
+LECTURE_SOURCE_RE = re.compile(
+    r"\b(week\s*\d+|lecture|lec\b|discussion|disc\b|lab\b|midterm|final|quiz|exam|homework|hw\b|assignment|chapter)\b",
+    flags=re.I,
+)
+LECTURE_HEADING_RE = re.compile(
+    r"^(?:###\s+|[-*+]\s*\*\*)(week\s*\d+|lecture|lec\b|discussion|disc\b|lab\b|midterm|final|quiz|exam|homework|hw\b|assignment|chapter)",
+    flags=re.I,
+)
 
 
 @dataclass
@@ -236,6 +246,68 @@ class SplitPhaseReport:
     incomplete_details: list[str] = field(default_factory=list)
     bucket_signaled_details: list[str] = field(default_factory=list)
     bucket_unsplit_details: list[str] = field(default_factory=list)
+
+
+def configure_workspace(root: Path) -> None:
+    global ROOT, RAW_ROOT, APPLE_NOTES_ROOT, WIKI_ROOT, CACHE_ROOT, CACHE_NOTES_ROOT
+    global CACHE_PAGES_ROOT, CACHE_MANIFEST_PATH, RENDER_STAGE_ROOT, RENDER_BACKUP_ROOT
+
+    ROOT = root
+    RAW_ROOT = ROOT / "raw"
+    APPLE_NOTES_ROOT = RAW_ROOT / "Apple Notes"
+    WIKI_ROOT = ROOT / "wiki"
+    CACHE_ROOT = ROOT / ".wiki-bootstrap-cache"
+    CACHE_NOTES_ROOT = CACHE_ROOT / "notes"
+    CACHE_PAGES_ROOT = CACHE_ROOT / "pages"
+    CACHE_MANIFEST_PATH = CACHE_ROOT / "manifest.json"
+    RENDER_STAGE_ROOT = ROOT / ".wiki-render-staging"
+    RENDER_BACKUP_ROOT = ROOT / ".wiki-render-backup"
+
+
+@contextmanager
+def temporary_workspace(root: Path):
+    original = (
+        ROOT,
+        RAW_ROOT,
+        APPLE_NOTES_ROOT,
+        WIKI_ROOT,
+        CACHE_ROOT,
+        CACHE_NOTES_ROOT,
+        CACHE_PAGES_ROOT,
+        CACHE_MANIFEST_PATH,
+        RENDER_STAGE_ROOT,
+        RENDER_BACKUP_ROOT,
+    )
+    configure_workspace(root)
+    try:
+        yield
+    finally:
+        (
+            restored_root,
+            restored_raw_root,
+            restored_apple_notes_root,
+            restored_wiki_root,
+            restored_cache_root,
+            restored_cache_notes_root,
+            restored_cache_pages_root,
+            restored_cache_manifest_path,
+            restored_render_stage_root,
+            restored_render_backup_root,
+        ) = original
+        globals().update(
+            {
+                "ROOT": restored_root,
+                "RAW_ROOT": restored_raw_root,
+                "APPLE_NOTES_ROOT": restored_apple_notes_root,
+                "WIKI_ROOT": restored_wiki_root,
+                "CACHE_ROOT": restored_cache_root,
+                "CACHE_NOTES_ROOT": restored_cache_notes_root,
+                "CACHE_PAGES_ROOT": restored_cache_pages_root,
+                "CACHE_MANIFEST_PATH": restored_cache_manifest_path,
+                "RENDER_STAGE_ROOT": restored_render_stage_root,
+                "RENDER_BACKUP_ROOT": restored_render_backup_root,
+            }
+        )
 
 
 def stable_json_dumps(payload: object) -> str:
@@ -339,7 +411,10 @@ def looks_like_archive(component: str) -> bool:
         return True
     if "archive" in normalized:
         return True
-    if re.fullmatch(r"[a-z]{3,9}\s+\d{1,2}", normalized):
+    if re.fullmatch(
+        r"(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}",
+        normalized,
+    ):
         return True
     if re.fullmatch(r"\d{1,2}-\d{1,2}(-\d{2,4})?", normalized):
         return True
@@ -1792,8 +1867,32 @@ def infer_split_candidate_for_source(source: SourceRecord, candidate_slugs: list
     return None
 
 
+def source_looks_like_lecture_material(source: SourceRecord, page_slug: str) -> bool:
+    normalized_label = clean_component(source.label) or slugify(source.label)
+    if normalized_label and (normalized_label == page_slug or normalized_label.startswith(f"{page_slug}-")):
+        return True
+
+    page_slug_variants = {
+        page_slug,
+        page_slug.replace("-", " "),
+        page_slug.replace("-", ""),
+    }
+    combined = " ".join(part for part in [source.label, source.path, source.cleaned_text] if part).lower()
+    if any(variant and variant in combined for variant in page_slug_variants):
+        return True
+    return bool(LECTURE_SOURCE_RE.search(combined))
+
+
+def page_looks_like_course_notes(page: Page) -> bool:
+    if not COURSE_PAGE_SLUG_RE.fullmatch(page.slug):
+        return False
+    lecture_like_sources = sum(1 for source in page.sources.values() if source_looks_like_lecture_material(source, page.slug))
+    return lecture_like_sources >= max(2, len(page.sources) - 1)
+
+
 def score_bucket_signals(page: Page) -> BucketSignalResult:
     reasons: list[str] = []
+    lecture_like_page = page_looks_like_course_notes(page)
 
     if page.slug in GENERIC_BUCKET_SLUGS:
         reasons.append("generic-parent-slug")
@@ -1803,26 +1902,30 @@ def score_bucket_signals(page: Page) -> BucketSignalResult:
     for line in note_lines:
         stripped = line.strip()
         if stripped.startswith("### ") or BOLD_HEADING_RE.match(stripped):
+            if lecture_like_page and LECTURE_HEADING_RE.match(stripped):
+                continue
             structured_note_groups += 1
-    if structured_note_groups >= 2:
+    if structured_note_groups >= 2 and not lecture_like_page:
         reasons.append("multi-cluster-notes")
 
-    source_slugs = {
-        derived
-        for source in page.sources.values()
-        for derived in [derive_source_atomic_slug(page, source)]
-        if derived != page.slug
-    }
-    if len(source_slugs) >= 3:
-        reasons.append("heterogeneous-sources")
+    if not lecture_like_page:
+        source_slugs = {
+            derived
+            for source in page.sources.values()
+            for derived in [derive_source_atomic_slug(page, source)]
+            if derived != page.slug
+        }
+        if len(source_slugs) >= 3:
+            reasons.append("heterogeneous-sources")
 
-    child_connection_candidates = {
-        connection_slug
-        for connection_slug in sorted_connection_slugs(page)
-        if connection_slug != page.slug and slug_similarity(connection_slug, page.slug) < 0.5
-    }
-    if len(child_connection_candidates) >= 2:
-        reasons.append("existing-satellites")
+    if not lecture_like_page:
+        child_connection_candidates = {
+            connection_slug
+            for connection_slug in sorted_connection_slugs(page)
+            if connection_slug != page.slug and slug_similarity(connection_slug, page.slug) < 0.5
+        }
+        if len(child_connection_candidates) >= 2:
+            reasons.append("existing-satellites")
 
     return BucketSignalResult(score=len(reasons), reasons=reasons)
 
@@ -1919,6 +2022,10 @@ def migrate_pages_to_atomic_topics(
 
     for slug in eligible_slugs:
         page = pages[slug]
+        if page_looks_like_course_notes(page):
+            report.atomic_pages += 1
+            print(f"Split phase: '{slug}' -> atomic (course lecture guard).", file=sys.stderr)
+            continue
         bucket_signals = score_bucket_signals(page)
         if bucket_signals.is_bucket_signaled:
             detail = f"{slug}: {', '.join(bucket_signals.reasons)}"

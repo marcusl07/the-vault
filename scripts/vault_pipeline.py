@@ -38,6 +38,37 @@ _SOURCE_LINE_RE = re.compile(r"^- \[(?P<label>[^\]]+)\]\((?P<path>[^)]+)\)(?P<su
 _CONNECTION_SLUG_RE = re.compile(r"\[\[(?P<slug>[^\]]+)\]\]")
 
 
+def configure_workspace(root: Path, *, capture_root: Path | None = None) -> None:
+    global ROOT, RAW_ROOT, WIKI_ROOT, JSONL_LOG_PATH, DEFAULT_CAPTURE_ROOT
+
+    ROOT = root
+    RAW_ROOT = ROOT / "raw"
+    WIKI_ROOT = ROOT / "wiki"
+    JSONL_LOG_PATH = ROOT / "log.jsonl"
+    DEFAULT_CAPTURE_ROOT = capture_root or ROOT / "capture"
+    bw.configure_workspace(root)
+
+
+@contextmanager
+def temporary_workspace(root: Path, *, capture_root: Path | None = None) -> Iterator[None]:
+    original = (ROOT, RAW_ROOT, WIKI_ROOT, JSONL_LOG_PATH, DEFAULT_CAPTURE_ROOT)
+    configure_workspace(root, capture_root=capture_root)
+    try:
+        yield
+    finally:
+        restored_root, restored_raw_root, restored_wiki_root, restored_log_path, restored_capture_root = original
+        globals().update(
+            {
+                "ROOT": restored_root,
+                "RAW_ROOT": restored_raw_root,
+                "WIKI_ROOT": restored_wiki_root,
+                "JSONL_LOG_PATH": restored_log_path,
+                "DEFAULT_CAPTURE_ROOT": restored_capture_root,
+            }
+        )
+        bw.configure_workspace(restored_root)
+
+
 class ExportItem(TypedDict):
     capture_id: str
     raw_path: str

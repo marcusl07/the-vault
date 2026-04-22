@@ -207,6 +207,18 @@ log.md updated
 
 The capture script exports newly captured notes into `raw/`, then the wiki ingest stage turns those raw notes into wiki pages.
 
+### Private/Public Repo Workflow
+
+- This repository is the private canonical source of truth.
+- `raw/` and `wiki/` stay private here and must never be pushed to the public repo.
+- Public work should be published from a filtered mirror, not by pushing this repo directly.
+- Use `scripts/sync_public_mirror.py --dest <public-repo-root>` to copy publishable files into the public repository.
+- Use `scripts/publish_private_and_public.py --public-repo <public-repo-root>` when you need to commit and push both repos in one pass.
+- Treat the public repo as disposable output that can always be regenerated from this private repo.
+- After any task that changes files in this repo, commit and push the private repo unless the user explicitly says not to.
+- After any code-related task, also sync the public mirror and commit/push the public repo unless the user explicitly says not to.
+- Do not commit or push `raw/` or private wiki content to the public repo under any circumstances.
+
 ---
 
 ## Tone and Voice
