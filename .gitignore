@@ -1,0 +1,13 @@
+raw/
+wiki/
+
+.DS_Store
+__pycache__/
+.pytest_cache/
+.wiki-bootstrap-cache/
+*.py[cod]
+
+ingest.log
+log.jsonl
+
+.obsidian/workspace.json
