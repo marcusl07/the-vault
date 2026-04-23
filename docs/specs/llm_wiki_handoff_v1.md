@@ -1,8 +1,12 @@
 # LLM Wiki Handoff v1
 
+This document is an implementation-oriented companion to [LLM Wiki Architecture](./llm_wiki_architecture.md).
+
+Use the architecture doc as the canonical source for high-level system principles. Use this handoff doc for repo-specific implementation direction and open design questions.
+
 ## Goal
 
-Turn the current personal wiki workflow into a true persistent LLM-maintained knowledge base:
+Turn the current personal wiki workflow into a true persistent LLM-maintained knowledge base consistent with the architecture document:
 
 - raw notes stay immutable source material
 - the wiki becomes the maintained synthesis layer
@@ -119,4 +123,3 @@ The design is good enough if:
 - Should wiki queries ever write back into the wiki automatically?
 - Should bootstrap and ingest share the same synthesis engine?
 - What is the right boundary between `raw/` and `wiki/` for each note type?
-
