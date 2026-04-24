@@ -2,144 +2,320 @@
 
 This document is an implementation-oriented companion to [LLM Wiki Architecture](./llm_wiki_architecture.md).
 
-Use the architecture doc as the canonical source for high-level system principles. Use this handoff doc for repo-specific implementation direction.
+Use the architecture doc as the canonical source for high-level system principles. Use this handoff doc for concrete implementation choices, data contracts, and operational boundaries.
+
+## Scope And Precedence
+
+- `docs/specs/llm_wiki_architecture.md` remains the canonical architecture reference.
+- `AGENTS.md` remains the active operating contract for page shape, ingest behavior, query behavior, and wiki tone.
+- This handoff doc refines implementation details that are too specific for the architecture doc.
+- If this handoff introduces a repo-shape extension that is not yet reflected in `AGENTS.md`, treat that extension as intentional implementation direction and update `AGENTS.md` when the implementation lands.
 
 ## Summary
 
-Build the wiki as a two-layer system:
+Build the wiki as a two-layer knowledge system:
 
 - immutable source artifacts remain the ground truth
 - `wiki/` remains the maintained synthesis layer
 
-Use a two-tier LLM pipeline for normal operation:
+Use a two-tier LLM maintenance pipeline:
 
-- every new source gets a cheap routing pass
-- only sources that warrant deeper work trigger the heavier maintenance updater
+- every new source artifact gets a cheap router pass
+- only sources that warrant deeper work trigger the heavy updater
 
-The system should support writeback from both ingest and query flows, but keep provenance strict: every material claim in the wiki must trace back to a persisted source artifact.
+Support writeback from both ingest and query flows, but keep provenance strict: every material wiki claim must trace back to a persisted immutable source artifact.
 
 ## Source Model
 
 ### Source roots
 
 - Keep `raw/` reserved for imported capture material from Obsidian/export flows.
-- Add a second immutable source root for chat-derived source artifacts.
-- Require source-type metadata on all persisted sources so downstream code can distinguish capture sources from chat sources without relying on path conventions alone.
-- Never mutate source artifacts after creation.
+- Add `sources/chat/` as a second immutable source root for chat-derived source artifacts.
+- Treat both source roots as immutable after creation.
+- Require explicit source metadata on every persisted artifact rather than inferring meaning from path alone.
+- Treat `sources/chat/` as private source material, the same as `raw/`, and never publish it to the public mirror.
+
+### Required source metadata
+
+Every persisted source artifact should carry enough frontmatter or adjacent metadata to support deterministic downstream behavior:
+
+- `source_kind`: `capture` or `chat`
+- `created_at`
+- stable source id
+- user-visible title or label
+- optional external URL
+- provenance pointer for chat sources, such as query id or conversation timestamp
+
+### Source artifact conventions
+
+- Capture artifacts remain exactly as exported into `raw/`.
+- Chat artifacts in `sources/chat/` should be append-only snapshots of the user-provided fact or preference that justified writeback.
+- Never edit an existing artifact to reflect a newer claim. Persist a new artifact and let the wiki point at the current one.
 
 ### Source citations
 
-- Keep wiki citation format the same for both source roots.
-- Use normal `## Sources` entries with visible literal URLs when applicable and file links to the source artifact.
-- If a later fact supersedes an earlier chat-derived fact, preserve the older source in audit/history rather than mutating it.
+- Keep wiki citation rendering consistent across both source roots.
+- When a source has an external URL, the visible citation text should be the literal URL and the markdown target should point to the local source artifact.
+- When a source has no external URL, use a descriptive label linked to the local source artifact.
+- If a newer chat-derived fact supersedes an older one, preserve the older source artifact for auditability rather than mutating or deleting it.
+
+## Operational Invariants
+
+These invariants are code-enforced and should be validated after every wiki mutation:
+
+- Topic pages contain only a title and `## Connections`.
+- Atomic pages may include `## Notes`, `## Connections`, `## Sources`, and `## Open Questions`, but empty sections must be stripped.
+- Every new or materially updated atomic page must have at least one meaningful outbound link unless the change is deferred into `wiki/review.md`.
+- `## Sources` entries are code-rendered, not model-rendered.
+- `## Connections` entries are normalized by code even if the model proposes them.
+- `wiki/index.md` stays compact and navigation-first.
+- `wiki/log.md` stays append-only and chronological.
+- `wiki/review.md` is a backlog, not an audit log.
 
 ## Maintenance Pipeline
 
 ### Deterministic ownership
 
-Code should remain authoritative for:
+Code remains authoritative for:
 
-- capture export into `raw/`
-- source identity and immutability
+- source persistence and immutability
+- source ids and source metadata
 - source link rendering
+- page-shape validation
+- connection normalization
 - index refresh
 - append-only log updates
-- bounded per-source execution and fallback behavior
+- maintenance budgets
+- fallback behavior when model output is invalid, incomplete, or over budget
 
-### Router pass
+The model remains responsible for semantic synthesis: what the source means, which pages it likely touches, what new notes belong on those pages, and whether a contradiction or new atomic page is present.
 
-- Run a cheap router pass for every new source artifact.
-- Keep the router output minimal: action type, candidate target pages, confidence, contradiction risk, new-page signal, and heavy-update-required flag.
-- Let the router escalate on semantic grounds rather than a long heuristic tree:
-  - ambiguity
-  - contradiction risk
-  - likely new atomic page
-  - multi-page impact
-  - reorganization need
+### Pipeline stages
 
-### Heavy updater
+Normal ingest and query-time writeback follow the same staged pipeline:
 
-- Invoke the heavy updater only when the router requests it.
-- Let the heavy updater rewrite `## Notes` and `## Open Questions` on touched atomic pages.
-- Preserve `## Sources` and `## Connections` deterministically during maintenance.
-- The model may propose relationship changes, but final source formatting and connection rendering stay code-owned.
-- Create a new page only when the source introduces a distinct reusable idea that meets the atomic-note rules from `AGENTS.md`.
-- Keep topic pages compressed and pure: title plus `## Connections` only.
+1. Persist the source artifact if it does not already exist.
+2. Assemble bounded context for the source and likely target pages.
+3. Run the router.
+4. If the router requests it, run the heavy updater.
+5. Validate and apply the resulting page deltas.
+6. Refresh `wiki/index.md`.
+7. Append to `wiki/log.md`.
+8. Append to `wiki/review.md` when contradictions or deferred work remain unresolved.
+
+### Router contract
+
+Run a cheap router pass for every new source artifact.
+
+The router output should be small, structured, and easy for code to validate:
+
+- `action`: `ignore`, `light_update`, `heavy_update`, or `queue_review`
+- `target_pages`: canonical wiki page titles
+- `new_page_signal`: boolean
+- `candidate_new_pages`: proposed new atomic page titles, if any
+- `contradiction_risk`: `low`, `medium`, or `high`
+- `reorganization_risk`: boolean
+- `confidence`: `low`, `medium`, or `high`
+- `reason`: short human-readable explanation
+
+The router should escalate on semantic grounds, not on a long deterministic heuristic tree:
+
+- ambiguity
+- contradiction risk
+- likely new atomic page
+- multi-page impact
+- reorganization need
+
+### Light update path
+
+When the router returns `light_update`, code may apply a bounded update without calling the heavy updater if all of the following are true:
+
+- the source touches a small known set of existing atomic pages
+- no contradiction risk is above `low`
+- no new page creation is required
+- page-shape invariants can be preserved with local section edits
+
+The light path should favor small note additions, source additions, and simple connection updates.
+
+### Heavy updater contract
+
+Invoke the heavy updater only when the router requests `heavy_update`.
+
+The heavy updater receives bounded source context plus the current contents of the touched pages. It should return a structured proposal rather than free-form file contents:
+
+- `page_updates`: per-page semantic deltas for `## Notes` and `## Open Questions`
+- `proposed_connections`: proposed outbound links by page
+- `proposed_new_pages`: title plus initial semantic content for any truly new atomic page
+- `contradiction_items`: unresolved claim conflicts, if any
+- `deferred_items`: work that should be queued because it exceeds budget or certainty
+- `budget_exceeded`: boolean
+- `reason`: short explanation of what changed
+
+The heavy updater may rewrite `## Notes` and `## Open Questions` on touched atomic pages. It may propose connection changes and new pages, but final rendering remains code-owned.
+
+### Merge contract
+
+Code applies model output through a deterministic merge layer:
+
+- validate that every proposed page still obeys atomic-page or topic-page shape rules
+- reject any topic-page mutation that adds notes, sources, or open questions
+- render `## Sources` from persisted artifacts
+- normalize `## Connections` formatting and deduplicate entries
+- strip empty sections
+- reject unsupported claims that do not map back to the source artifact set
+- if model output is invalid, retry once with a narrower request or fall back to `queue_review`
 
 ## Conflict And Review Model
 
-### Conflicts
+### Contradictions
 
-- When a new source conflicts with existing wiki knowledge, record both claims and flag the page rather than silently overwriting.
-- Represent unresolved contradictions in a lightweight `## Open Questions` section on affected pages.
+- When a new source conflicts with existing wiki knowledge, do not silently overwrite the older claim.
+- Record the current competing claims on the affected page in `## Open Questions` unless the conflict is a normal chat-fact supersession case defined below.
+- Add an entry to `wiki/review.md` for unresolved contradictions.
+
+### Supersession vs contradiction
+
+Treat a newer chat-derived statement as superseding an older one, not as a contradiction, only when all of the following are true:
+
+- both claims are chat-derived
+- both claims concern a stable personal fact or preference
+- the newer statement is clearly intended to replace the earlier one
+- there is no mixed-source disagreement with capture material or external sources
+
+In that case:
+
+- persist the newer chat artifact
+- update the wiki to reflect the newer current fact
+- preserve the older source artifact for auditability
+- do not create an `## Open Questions` entry unless the replacement intent is ambiguous
 
 ### Review backlog
 
-- Add a separate markdown backlog file, e.g. `wiki/review.md`, for:
-  - unresolved contradictions
-  - deferred over-budget maintenance work
-- Do not use `index.md` as the review queue.
-- Keep `wiki/log.md` as the chronological audit log, not the backlog.
-- Query answers should surface relevant pending review items when applicable.
+Add `wiki/review.md` as a first-class backlog file for unresolved contradictions and deferred work.
+
+Each backlog entry should include:
+
+- created date
+- status
+- reason
+- affected wiki pages
+- source artifact links
+- next required action
+
+Resolution behavior:
+
+- resolved items may be edited in place to mark them resolved
+- resolved items should not be deleted from the backlog unless a later cleanup rule is added
+- `wiki/log.md` remains the historical audit trail; `wiki/review.md` remains the actionable queue
 
 ## Query-Time Writeback
 
-- Allow queries to write back when the query exposes a concrete wiki gap worth preserving.
-- Allow chat-provided facts to become source-backed wiki knowledge only for stable personal facts and preferences.
-- Persist those chat facts as immutable chat-source artifacts in the separate source root before updating wiki pages.
-- If a later chat statement supersedes an earlier chat-derived fact, update the wiki to the newer fact and preserve the older source in audit/history rather than treating it as an unresolved contradiction by default.
-- When query-time writeback creates or updates pages, explicitly report the mutations in the answer.
+Allow queries to write back only when the interaction exposes a concrete wiki gap worth preserving.
+
+Eligible chat-derived writeback should be narrow by default:
+
+- stable personal facts
+- stable personal preferences
+- durable resource references explicitly supplied by the user
+
+Do not persist ephemeral chat content such as:
+
+- one-off brainstorming
+- temporary plans
+- speculative statements
+- ambiguous preferences
+
+Writeback behavior:
+
+- persist the chat artifact in `sources/chat/` before mutating wiki pages
+- deduplicate against existing current chat-derived facts when the new artifact is materially the same
+- use light update when a single existing page can absorb the fact safely
+- use heavy update when the source touches multiple pages, creates a new page, or changes open questions
+- when a query mutates the wiki, explicitly report the mutation in the answer
 
 ## Cost And Budgeting
 
-- Use the two-tier pipeline as the default cost-control mechanism.
-- Bound the heavy updater with a per-source maintenance budget:
-  - max candidate pages considered
-  - max assembled update context
-  - max number of pages rewritten from one source
-  - max number of heavy update calls per source
-- If the heavy updater would exceed budget, apply the highest-confidence bounded update and queue the rest in `wiki/review.md`.
-- Do not let one source trigger an unbounded multi-page rewrite.
+Use the two-tier pipeline as the default cost-control mechanism.
+
+Bound heavy maintenance on a per-source basis:
+
+- max candidate pages considered
+- max assembled context size
+- max number of pages rewritten from one source
+- max number of heavy updater calls per source
+
+If heavy maintenance would exceed budget:
+
+- apply the highest-confidence bounded update that still preserves invariants
+- queue the remaining work in `wiki/review.md`
+- log that deferral in `wiki/log.md`
+
+One source must never trigger an unbounded multi-page rewrite.
+
+## Bootstrap And Lint
+
+### Bootstrap
+
+- Bootstrap should reuse the same router and heavy updater contracts as normal ingest.
+- Bootstrap may use larger budgets than routine ingest, but the same page-shape and provenance rules still apply.
+- Bootstrap should prefer coverage over perfect restructuring in one pass; unresolved items may be queued into `wiki/review.md`.
+
+### Lint
+
+- Lint remains primarily deterministic.
+- Lint should detect orphans, missing concept pages, contradictions, invalid page shapes, dead citations, and missing outbound links on atomic pages.
+- Lint may append repair candidates into `wiki/review.md`, but it should not auto-rewrite wiki content unless a later implementation mode explicitly allows that.
 
 ## Public Interfaces And Files
 
-- Update the implementation/docs to define:
-  - two source roots
-  - two-tier router/updater flow
-  - query-time writeback rules
-  - contradiction handling
-  - maintenance budget fallback
-- Extend source frontmatter/types to include a source kind such as capture vs chat.
-- Add a review backlog file in `wiki/` as a first-class artifact.
-- Keep `wiki/log.md` as the chronological audit log, not the backlog queue.
+The implementation and surrounding docs should define:
+
+- two immutable source roots: `raw/` and `sources/chat/`
+- source metadata including `source_kind`
+- the router and heavy-updater response contracts
+- the merge layer that renders sources and normalizes connections
+- query-time writeback admissibility rules
+- contradiction and supersession handling
+- budget fallback behavior
+- `wiki/review.md` as a first-class backlog artifact
+
+Keep `wiki/log.md` as the chronological audit log, not the backlog queue.
 
 ## Acceptance Criteria
 
-The design is good enough if:
+The design is good enough if the following scenarios are implementable and testable:
 
-- a simple ingest can update one existing atomic page without a heavy rewrite
-- an ambiguous or contradiction-prone source can trigger heavy maintenance and update `## Open Questions`
-- a source that introduces a true new atomic idea creates one new atomic page with at least one meaningful outbound link
-- topic pages remain topic-shaped and are not polluted with notes or sources
-- query-time writeback can persist a chat-derived stable fact as a source artifact, update the relevant page, and report the mutation in the answer
-- a later chat correction can supersede an earlier chat-derived fact while preserving auditability
-- over-budget maintenance applies only the bounded highest-confidence update and records deferred work in `wiki/review.md`
-- `index.md` remains compact and navigation-focused after ingest/query mutations
-- `wiki/log.md` records ingest/query events without becoming the review queue
-- material wiki claims remain traceable to persisted source artifacts
+- Simple ingest:
+  one new source updates one existing atomic page, preserves page shape, refreshes `wiki/index.md`, and appends one ingest entry to `wiki/log.md` without calling the heavy updater.
+- Ambiguous ingest:
+  one contradiction-prone source triggers heavy maintenance, updates `## Open Questions` on the affected page, and adds a backlog item to `wiki/review.md`.
+- New atomic idea:
+  one source creates exactly one new atomic page with at least one meaningful outbound link and at least one source citation tied to a persisted artifact.
+- Topic-page protection:
+  an attempted topic-page rewrite that adds notes or sources is rejected by code-owned validation.
+- Query writeback:
+  one stable chat-derived fact is persisted into `sources/chat/`, integrated into the correct wiki page, reported in the query answer, and logged.
+- Chat correction:
+  a later chat correction updates the current fact, preserves the older chat artifact, and avoids `## Open Questions` when the replacement intent is clear.
+- Over-budget maintenance:
+  the system applies only the highest-confidence bounded update, records the deferred work in `wiki/review.md`, and notes the deferral in `wiki/log.md`.
+- Lint:
+  lint can detect invalid page shape or missing outbound links and record repair work without directly mutating the wiki.
+- Provenance:
+  every material wiki claim in the touched pages can be traced to a persisted source artifact.
 
 ## Non-Goals
 
 - turning the wiki into a generic RAG system
-- auto-generating pages that have no real source grounding
+- auto-generating pages with no real source grounding
 - creating massive summary pages that flatten distinct ideas
 - forcing every source into a new page
 - replacing deterministic operational ownership with a large heuristic rules framework
 
 ## Defaults
 
-- Shared core synthesis engine is reused across bootstrap, ingest, and query maintenance, with mode-specific wrappers.
+- Shared synthesis components are reused across bootstrap, ingest, and query maintenance, with mode-specific wrappers.
 - Routine ingests auto-apply; human review is reserved for contradictions and deferred expensive work.
 - Provenance is strict: synthesized prose is allowed, unsupported facts are not.
-- Query writeback is enabled by default, but only when the query reveals a concrete gap worth preserving.
-- Simplicity is preferred over a large deterministic rule framework; semantic routing is model-driven, with only minimal code-owned operational guardrails.
+- Query writeback is enabled by default only when the interaction reveals a concrete durable gap worth preserving.
+- Simplicity is preferred over a large deterministic rules framework; semantic routing is model-driven, with minimal code-owned guardrails around structure, provenance, and budget.
