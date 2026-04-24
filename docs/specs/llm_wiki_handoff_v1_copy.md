@@ -6,9 +6,10 @@ Use the architecture doc as the canonical source for high-level system principle
 
 ## Scope And Precedence
 
-- `docs/specs/llm_wiki_architecture.md` remains the canonical architecture reference.
+- `docs/specs/llm_wiki_architecture.md` remains the canonical architecture reference and should be treated as immutable upstream source material in this repo.
 - `AGENTS.md` remains the active operating contract for page shape, ingest behavior, query behavior, and wiki tone.
 - This handoff doc refines implementation details that are too specific for the architecture doc.
+- This handoff doc is the local extension layer for repo-specific implementation choices that should not modify the upstream architecture document.
 - If this handoff introduces a repo-shape extension that is not yet reflected in `AGENTS.md`, treat that extension as intentional implementation direction and update `AGENTS.md` when the implementation lands.
 
 ## Summary
