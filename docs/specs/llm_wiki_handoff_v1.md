@@ -2,124 +2,144 @@
 
 This document is an implementation-oriented companion to [LLM Wiki Architecture](./llm_wiki_architecture.md).
 
-Use the architecture doc as the canonical source for high-level system principles. Use this handoff doc for repo-specific implementation direction and open design questions.
+Use the architecture doc as the canonical source for high-level system principles. Use this handoff doc for repo-specific implementation direction.
 
-## Goal
+## Summary
 
-Turn the current personal wiki workflow into a true persistent LLM-maintained knowledge base consistent with the architecture document:
+Build the wiki as a two-layer system:
 
-- raw notes stay immutable source material
-- the wiki becomes the maintained synthesis layer
-- new captures are integrated into existing pages, not just indexed for later retrieval
-- queries should read from the wiki first, not rediscover facts from raw notes every time
+- immutable source artifacts remain the ground truth
+- `wiki/` remains the maintained synthesis layer
 
-## Current State
+Use a two-tier LLM pipeline for normal operation:
 
-The repo already has the core ingredients:
+- every new source gets a cheap routing pass
+- only sources that warrant deeper work trigger the heavier maintenance updater
 
-- `raw/` holds immutable source notes
-- `wiki/` holds markdown pages and links
-- `wiki/index.md` is a navigation layer
-- `wiki/log.md` is a chronological audit trail
-- `scripts/vault_pipeline.py` performs deterministic capture/export/ingest
-- `scripts/bootstrap_wiki.py` can use a model for synthesis and splitting
+The system should support writeback from both ingest and query flows, but keep provenance strict: every material claim in the wiki must trace back to a persisted source artifact.
 
-What this means in practice:
+## Source Model
 
-- not every new note requires an LLM call
-- some wiki maintenance is rule-based and local
-- the model is used for higher-level synthesis work, not as a mandatory step in every ingest
+### Source roots
 
-## Desired End State
+- Keep `raw/` reserved for imported capture material from Obsidian/export flows.
+- Add a second immutable source root for chat-derived source artifacts.
+- Require source-type metadata on all persisted sources so downstream code can distinguish capture sources from chat sources without relying on path conventions alone.
+- Never mutate source artifacts after creation.
 
-The wiki should behave like a compounding artifact:
+### Source citations
 
-- every new source updates relevant existing pages
-- cross-links are added when a relationship is real
-- contradictions are flagged instead of overwritten silently
-- topic pages emerge only when they compress a real cluster
-- the index stays compact and usable as the main navigation surface
+- Keep wiki citation format the same for both source roots.
+- Use normal `## Sources` entries with visible literal URLs when applicable and file links to the source artifact.
+- If a later fact supersedes an earlier chat-derived fact, preserve the older source in audit/history rather than mutating it.
 
-## Scope
+## Maintenance Pipeline
 
-### In scope
+### Deterministic ownership
 
-- ingesting new captures from Obsidian into `raw/`
-- integrating raw notes into existing wiki pages
-- maintaining the index and log
-- supporting LLM-assisted synthesis where it adds value
-- keeping raw notes immutable
+Code should remain authoritative for:
 
-### Out of scope for v1
+- capture export into `raw/`
+- source identity and immutability
+- source link rendering
+- index refresh
+- append-only log updates
+- bounded per-source execution and fallback behavior
 
-- replacing all deterministic ingestion with LLM calls
-- building a full embedding/RAG search stack
-- changing the public/private mirror workflow
-- reproducing the Obsidian folder structure in the wiki
+### Router pass
 
-## Workflow Contract
+- Run a cheap router pass for every new source artifact.
+- Keep the router output minimal: action type, candidate target pages, confidence, contradiction risk, new-page signal, and heavy-update-required flag.
+- Let the router escalate on semantic grounds rather than a long heuristic tree:
+  - ambiguity
+  - contradiction risk
+  - likely new atomic page
+  - multi-page impact
+  - reorganization need
 
-### Ingest
+### Heavy updater
 
-When a new note arrives:
+- Invoke the heavy updater only when the router requests it.
+- Let the heavy updater rewrite `## Notes` and `## Open Questions` on touched atomic pages.
+- Preserve `## Sources` and `## Connections` deterministically during maintenance.
+- The model may propose relationship changes, but final source formatting and connection rendering stay code-owned.
+- Create a new page only when the source introduces a distinct reusable idea that meets the atomic-note rules from `AGENTS.md`.
+- Keep topic pages compressed and pure: title plus `## Connections` only.
 
-1. export it to `raw/`
-2. identify the relevant existing wiki pages
-3. update or create pages with the new information
-4. add meaningful wikilinks
-5. append an entry to `log.md`
-6. refresh `index.md`
+## Conflict And Review Model
 
-### Query
+### Conflicts
 
-When answering a question:
+- When a new source conflicts with existing wiki knowledge, record both claims and flag the page rather than silently overwriting.
+- Represent unresolved contradictions in a lightweight `## Open Questions` section on affected pages.
 
-1. read `index.md` first
-2. inspect the most relevant pages
-3. follow one or two tight wikilinks if they add context
-4. answer from wiki content, not general memory
+### Review backlog
 
-### Lint
+- Add a separate markdown backlog file, e.g. `wiki/review.md`, for:
+  - unresolved contradictions
+  - deferred over-budget maintenance work
+- Do not use `index.md` as the review queue.
+- Keep `wiki/log.md` as the chronological audit log, not the backlog.
+- Query answers should surface relevant pending review items when applicable.
 
-Periodically check for:
+## Query-Time Writeback
 
-- orphan pages
-- duplicated concepts without consolidation
-- contradictions between pages
-- dead links in sources
-- clusters that should become topic pages
+- Allow queries to write back when the query exposes a concrete wiki gap worth preserving.
+- Allow chat-provided facts to become source-backed wiki knowledge only for stable personal facts and preferences.
+- Persist those chat facts as immutable chat-source artifacts in the separate source root before updating wiki pages.
+- If a later chat statement supersedes an earlier chat-derived fact, update the wiki to the newer fact and preserve the older source in audit/history rather than treating it as an unresolved contradiction by default.
+- When query-time writeback creates or updates pages, explicitly report the mutations in the answer.
 
-## Spec Questions to Resolve
+## Cost And Budgeting
 
-- Which ingest steps must remain deterministic?
-- Which steps should be LLM-assisted?
-- What page types are mandatory versus optional?
-- How should contradictions be represented?
-- When should a new source update an existing page versus create a new one?
-- What is the minimum useful index format at scale?
-- What is the expected human review loop, if any?
+- Use the two-tier pipeline as the default cost-control mechanism.
+- Bound the heavy updater with a per-source maintenance budget:
+  - max candidate pages considered
+  - max assembled update context
+  - max number of pages rewritten from one source
+  - max number of heavy update calls per source
+- If the heavy updater would exceed budget, apply the highest-confidence bounded update and queue the rest in `wiki/review.md`.
+- Do not let one source trigger an unbounded multi-page rewrite.
+
+## Public Interfaces And Files
+
+- Update the implementation/docs to define:
+  - two source roots
+  - two-tier router/updater flow
+  - query-time writeback rules
+  - contradiction handling
+  - maintenance budget fallback
+- Extend source frontmatter/types to include a source kind such as capture vs chat.
+- Add a review backlog file in `wiki/` as a first-class artifact.
+- Keep `wiki/log.md` as the chronological audit log, not the backlog queue.
 
 ## Acceptance Criteria
 
 The design is good enough if:
 
-- a new source can be folded into the wiki without hand-editing multiple pages
-- the wiki remains navigable through `index.md`
-- the log provides a clear history of ingests and queries
-- the system does not require re-deriving the same synthesis on every query
-- the workflow still works when LLM calls are unavailable for simple ingests
+- a simple ingest can update one existing atomic page without a heavy rewrite
+- an ambiguous or contradiction-prone source can trigger heavy maintenance and update `## Open Questions`
+- a source that introduces a true new atomic idea creates one new atomic page with at least one meaningful outbound link
+- topic pages remain topic-shaped and are not polluted with notes or sources
+- query-time writeback can persist a chat-derived stable fact as a source artifact, update the relevant page, and report the mutation in the answer
+- a later chat correction can supersede an earlier chat-derived fact while preserving auditability
+- over-budget maintenance applies only the bounded highest-confidence update and records deferred work in `wiki/review.md`
+- `index.md` remains compact and navigation-focused after ingest/query mutations
+- `wiki/log.md` records ingest/query events without becoming the review queue
+- material wiki claims remain traceable to persisted source artifacts
 
 ## Non-Goals
 
 - turning the wiki into a generic RAG system
 - auto-generating pages that have no real source grounding
 - creating massive summary pages that flatten distinct ideas
-- forcing every note into a new page
+- forcing every source into a new page
+- replacing deterministic operational ownership with a large heuristic rules framework
 
-## Open Questions
+## Defaults
 
-- Should the LLM write only synthesis pages, or also maintain atomic notes?
-- Should page updates be diff-based, full rewrites, or hybrid?
-- Should wiki queries ever write back into the wiki automatically?
-- Should bootstrap and ingest share the same synthesis engine?
-- What is the right boundary between `raw/` and `wiki/` for each note type?
+- Shared core synthesis engine is reused across bootstrap, ingest, and query maintenance, with mode-specific wrappers.
+- Routine ingests auto-apply; human review is reserved for contradictions and deferred expensive work.
+- Provenance is strict: synthesized prose is allowed, unsupported facts are not.
+- Query writeback is enabled by default, but only when the query reveals a concrete gap worth preserving.
+- Simplicity is preferred over a large deterministic rule framework; semantic routing is model-driven, with only minimal code-owned operational guardrails.
