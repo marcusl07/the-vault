@@ -142,6 +142,8 @@ PAGE_SPLIT_MAX_BODY_CHARS = 6_000
 PAGE_SHAPE_ATOMIC = "atomic"
 PAGE_SHAPE_TOPIC = "topic"
 INDEX_SECTION_ORDER = ("Concepts", "Entities", "Experiences", "Aspirations")
+CATALOG_PATH = "catalog.md"
+HIGH_SIGNAL_INBOUND_THRESHOLD = 3
 SOURCE_LINE_RE = re.compile(r"^- \[(?P<label>[^\]]+)\]\((?P<path>[^)]+)\)(?P<suffix>.*)$")
 CONNECTION_SLUG_RE = re.compile(r"\[\[(?P<slug>[^\]]+)\]\]")
 BOLD_HEADING_RE = re.compile(r"^[-*+]\s*\*\*(.+?)\*\*\s*$")
@@ -912,6 +914,7 @@ def stage_rendered_wiki(
         atomic_write_text(target, render_page(page))
 
     atomic_write_text(RENDER_STAGE_ROOT / "index.md", render_index(pages))
+    atomic_write_text(RENDER_STAGE_ROOT / CATALOG_PATH, render_catalog(pages))
 
     existing_lines = [
         line
@@ -1946,6 +1949,44 @@ def page_index_summary(page: Page) -> str:
     return f"{source_count} source{'' if source_count == 1 else 's'}"
 
 
+def inbound_link_counts(pages: dict[str, Page]) -> Counter:
+    counts: Counter = Counter()
+    known_slugs = set(pages)
+    for page in pages.values():
+        for slug in sorted_connection_slugs(page, limit=None):
+            if slug in known_slugs:
+                counts[slug] += 1
+    return counts
+
+
+def render_catalog(pages: dict[str, Page]) -> str:
+    grouped: defaultdict[str, list[Page]] = defaultdict(list)
+    for page in pages.values():
+        if page.slug in {"index", "log", Path(CATALOG_PATH).stem}:
+            continue
+        grouped[page.page_type].append(page)
+
+    lines = [
+        "# Wiki Catalog",
+        "",
+        f"_Last updated: {TODAY} — {len(pages)} pages_",
+        "",
+    ]
+
+    for section in INDEX_SECTION_ORDER:
+        lines.append(f"## {section}")
+        section_pages = sorted(grouped.get(section, []), key=lambda page: page.title.lower())
+        if not section_pages:
+            lines.append("- None yet.")
+            lines.append("")
+            continue
+        for page in section_pages:
+            lines.append(f"- [[{page.slug}]] — {page_index_summary(page)}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def parse_page_file(path: Path, page_type: str | None = None) -> ParsedWikiPage:
     text = path.read_text(encoding="utf-8") if path.exists() else ""
     lines = text.splitlines()
@@ -2031,13 +2072,20 @@ def load_existing_page_types(index_path: Path) -> dict[str, str]:
     return page_types
 
 
+def load_page_types() -> dict[str, str]:
+    catalog_path = WIKI_ROOT / CATALOG_PATH
+    if catalog_path.exists():
+        return load_existing_page_types(catalog_path)
+    return load_existing_page_types(WIKI_ROOT / "index.md")
+
+
 def load_existing_wiki_pages() -> dict[str, ParsedWikiPage]:
-    page_types = load_existing_page_types(WIKI_ROOT / "index.md")
+    page_types = load_page_types()
     parsed_pages: dict[str, ParsedWikiPage] = {}
     if not WIKI_ROOT.exists():
         return parsed_pages
     for path in sorted(WIKI_ROOT.glob("*.md")):
-        if path.stem in {"index", "log"}:
+        if path.stem in {"index", "log", Path(CATALOG_PATH).stem}:
             continue
         parsed = parse_page_file(path, page_type=page_types.get(path.stem))
         parsed_pages[parsed.slug] = parsed
@@ -2474,12 +2522,18 @@ def maybe_apply_query_time_split_fix(
         changed_page_slugs.append(slug)
 
     rendered_index = render_index(pages)
+    rendered_catalog = render_catalog(pages)
+    catalog_path = WIKI_ROOT / CATALOG_PATH
+    before_catalog_text = catalog_path.read_text(encoding="utf-8") if catalog_path.exists() else None
     index_changed = before_index_text != rendered_index
+    catalog_changed = before_catalog_text != rendered_catalog
     if not changed_page_slugs:
         return False
 
     if index_changed:
         atomic_write_text(index_path, rendered_index)
+    if catalog_changed:
+        atomic_write_text(catalog_path, rendered_catalog)
 
     append_wiki_query_log(f"{mutation_note} — {parent_slug} -> {', '.join(child_slugs[:8])}")
     return True
@@ -2853,16 +2907,19 @@ def render_page(page: Page) -> str:
 
 
 def render_index(pages: dict[str, Page]) -> str:
+    counts = inbound_link_counts(pages)
     grouped: defaultdict[str, list[Page]] = defaultdict(list)
     for page in pages.values():
-        if page.slug in {"index", "log"}:
+        if page.slug in {"index", "log", Path(CATALOG_PATH).stem}:
             continue
-        grouped[page.page_type].append(page)
+        if page_shape(page) == PAGE_SHAPE_TOPIC or counts.get(page.slug, 0) >= HIGH_SIGNAL_INBOUND_THRESHOLD:
+            grouped[page.page_type].append(page)
 
     lines = [
         "# Wiki Index",
         "",
         f"_Last updated: {TODAY} — {len(pages)} pages_",
+        "_Navigation only: topic pages plus high-signal atomic pages. Use [[catalog]] for exhaustive lookup._",
         "",
     ]
 
