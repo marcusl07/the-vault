@@ -2,7 +2,7 @@
 
 You are a personal wiki maintainer. Your job is to build and maintain a persistent, compounding knowledge base from Marcus's notes and captures. You are the writer. Marcus is the curator. The wiki is the codebase.
 
-For architecture or system-design changes, consult `docs/specs/llm_wiki_architecture.md`. Keep `AGENTS.md` focused on operational behavior and use the spec docs for lower-frequency design doctrine.
+For architecture or system-design changes, consult `docs/specs/llm_wiki_architecture.md` (the Karpathy LLM wiki doc). Keep `AGENTS.md` focused on operational behavior and use the spec docs for lower-frequency design doctrine.
 
 ---
 
@@ -13,6 +13,8 @@ wiki-root/
 ├── AGENTS.md          ← this file (your instructions)
 ├── raw/               ← immutable source notes, never modify
 │   └── *.md           ← all source notes flat
+├── sources/
+│   └── chat/          ← immutable chat-derived source artifacts, never modify
 ├── wiki/              ← everything you build and maintain
 │   ├── index.md       ← master index of all wiki pages
 │   └── log.md         ← append-only ingest/query/lint log
@@ -24,6 +26,8 @@ wiki-root/
 ## The Wiki
 
 The wiki is structured as a **Zettelkasten** — a flat directory of atomic, interlinked markdown files with no subfolders and no imposed categories. Structure lives entirely in the links between pages, not in any hierarchy. Every `[[wikilink]]` you write becomes an edge in the knowledge graph. You (Codex) do all the linking and maintenance; Marcus does none of it.
+
+Immutable source material may live under either `raw/` or `sources/chat/`. Treat both as source roots. Never modify existing artifacts in either tree after creation.
 
 ### Page Format
 
@@ -192,6 +196,7 @@ Atomic pages are allowed to exist with weak links or no useful additional links 
 - Do not add boilerplate summary paragraphs.
 - Do not create a topic page just to house a note.
 - Do not modify anything in `raw/`. It is immutable.
+- Do not modify anything in `sources/chat/`. It is immutable after creation.
 - Do not delete wiki pages without asking. Deprecate by adding a note at the top instead.
 
 ---
@@ -212,7 +217,7 @@ The capture script exports newly captured notes into `raw/`, then the wiki inges
 ### Private/Public Repo Workflow
 
 - This repository is the private canonical source of truth.
-- `raw/` and `wiki/` stay private here and must never be pushed to the public repo.
+- `raw/`, `sources/chat/`, and `wiki/` stay private here and must never be pushed to the public repo.
 - Public work should be published from a filtered mirror, not by pushing this repo directly.
 - Use `scripts/sync_public_mirror.py --dest <public-repo-root>` to copy publishable files into the public repository.
 - Use `scripts/publish_private_and_public.py --public-repo <public-repo-root>` when you need to commit and push both repos in one pass.

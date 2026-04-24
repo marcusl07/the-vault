@@ -28,6 +28,45 @@ def load_source(name: str) -> bw.SourceRecord:
 
 
 class BootstrapWikiTests(unittest.TestCase):
+    def test_validate_page_rejects_topic_with_atomic_sections(self) -> None:
+        page = bw.Page(
+            slug="desserts",
+            title="Desserts",
+            page_type="Concepts",
+            summary_hint="Desserts",
+            shape=bw.PAGE_SHAPE_TOPIC,
+        )
+        page.notes = ["Should not be here."]
+        page.sources["../raw/desserts.md"] = bw.SourceRecord(
+            label="Desserts",
+            path="../raw/desserts.md",
+            status="local_only",
+            raw_content="",
+            cleaned_text="",
+            fetched_summary=None,
+            detected_url=None,
+        )
+
+        issues = bw.validate_page(page)
+
+        self.assertEqual(issues, ["topic-pages-cannot-have-notes", "topic-pages-cannot-have-sources"])
+
+    def test_render_page_includes_open_questions_for_atomic_pages(self) -> None:
+        page = bw.Page(
+            slug="coffee",
+            title="Coffee",
+            page_type="Concepts",
+            summary_hint="Coffee",
+        )
+        page.notes = ["Marcus prefers pourover."]
+        page.open_questions = ["Is this still true when traveling?"]
+        page.connections["pourover"] += 1
+
+        rendered = bw.render_page(page)
+
+        self.assertIn("## Open Questions", rendered)
+        self.assertIn("- Is this still true when traveling?", rendered)
+
     def test_bucket_scoring_recipe_like_page_crosses_threshold(self) -> None:
         sources = [
             bw.SourceRecord(
