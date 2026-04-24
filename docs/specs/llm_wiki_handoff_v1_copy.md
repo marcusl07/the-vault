@@ -305,6 +305,48 @@ The design is good enough if the following scenarios are implementable and testa
 - Provenance:
   every material wiki claim in the touched pages can be traced to a persisted source artifact.
 
+## Implementation Tasks
+
+Implement the system as a staged sequence of small, independent tasks:
+
+1. Source roots and metadata
+   Add support for immutable source artifacts in `raw/` and `sources/chat/`, with explicit source metadata such as `source_kind`, `created_at`, stable id, title, and optional external URL.
+2. Source persistence and citation rendering
+   Implement code-owned source persistence, source lookup, and deterministic `## Sources` rendering for both source roots.
+3. Page-shape validation
+   Implement validators for atomic-page and topic-page invariants, including empty-section stripping and outbound-link checks.
+4. Router contract
+   Implement the cheap router call plus schema validation for `action`, `target_pages`, `candidate_new_pages`, contradiction risk, confidence, and reason.
+5. Light update path
+   Implement the bounded light-update path for small updates to existing atomic pages without calling the heavy updater.
+6. Merge layer
+   Implement code-owned merge logic for semantic deltas, including connection normalization, source rendering, deduplication, and invalid-output fallback.
+7. Index and log refresh
+   Implement deterministic `wiki/index.md` refresh and append-only `wiki/log.md` updates after every successful mutation.
+8. Query-time chat writeback
+   Implement persistence of eligible stable chat-derived facts or preferences into `sources/chat/`, followed by normal router and merge flow.
+9. Supersession handling
+   Implement historical progression behavior for superseded chat-derived facts or preferences so the wiki can reflect change over time without treating clear replacements as contradictions.
+10. Review backlog
+    Add `wiki/review.md` handling for unresolved contradictions, deferred work, and invalid or over-budget maintenance outcomes.
+11. Heavy updater path
+    Implement the heavy updater contract and bounded application flow for ambiguity, contradiction risk, multi-page impact, or new-page creation.
+12. Budget enforcement
+    Enforce per-source maintenance budgets and ensure deferred work is logged and queued when heavy maintenance exceeds limits.
+13. Bootstrap integration
+    Reuse the same router, merge, and validation pipeline for bootstrap with larger budgets and coverage-first defaults.
+14. Lint integration
+    Implement deterministic lint checks for orphans, invalid page shapes, dead citations, missing outbound links, and contradiction/reporting candidates.
+15. Acceptance tests
+    Add scenario-style tests for simple ingest, ambiguous ingest, new atomic page creation, topic-page protection, query writeback, chat correction, over-budget maintenance, lint reporting, and provenance traceability.
+
+Recommended delivery order:
+
+- Phase 1: tasks 1 through 7
+- Phase 2: tasks 8 through 10
+- Phase 3: tasks 11 through 12
+- Phase 4: tasks 13 through 15
+
 ## Non-Goals
 
 - turning the wiki into a generic RAG system
