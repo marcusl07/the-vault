@@ -144,6 +144,94 @@ class VaultPipelineTests(unittest.TestCase):
             self.assertEqual(decision.action, "heavy_update")
             self.assertEqual(decision.candidate_new_pages, ["brand-new-topic"])
 
+    def test_query_writeback_chat_fact_persists_artifact_updates_page_and_logs_query(self) -> None:
+        with isolated_env() as (root, _, wiki_root, _):
+            result = vp.query_writeback_chat_fact(
+                page_title="Coffee Preferences",
+                note="Marcus prefers pourover over espresso at home.",
+                related_pages=["coffee"],
+                created_at="2026-04-23T10:00:00Z",
+                conversation_ref="chat:2026-04-23T10:00:00Z",
+                fact_key="home-brew-method",
+            )
+
+            self.assertEqual(sorted(result.changed_slugs), ["coffee", "coffee-preferences"])
+            self.assertIsNotNone(result.source_path)
+            assert result.source_path is not None
+            self.assertTrue(result.source_path.is_relative_to(root / "sources" / "chat"))
+
+            target_page = (wiki_root / "coffee-preferences.md").read_text(encoding="utf-8")
+            self.assertIn("Marcus prefers pourover over espresso at home.", target_page)
+            self.assertIn("- [[coffee]]", target_page)
+            self.assertIn("../sources/chat/", target_page)
+
+            query_log = (wiki_root / "log.md").read_text(encoding="utf-8")
+            self.assertIn('query | writeback | "Coffee Preferences" | Router: heavy_update', query_log)
+
+            index_text = (wiki_root / "index.md").read_text(encoding="utf-8")
+            self.assertNotIn("[[review]]", index_text)
+
+    def test_query_writeback_chat_fact_supersedes_prior_chat_fact_without_open_question(self) -> None:
+        with isolated_env() as (_, _, wiki_root, _):
+            first = vp.query_writeback_chat_fact(
+                page_title="Coffee Preferences",
+                note="Marcus prefers pourover over espresso at home.",
+                related_pages=["coffee"],
+                created_at="2026-04-23T10:00:00Z",
+                conversation_ref="chat:2026-04-23T10:00:00Z",
+                fact_key="home-brew-method",
+            )
+            second = vp.query_writeback_chat_fact(
+                page_title="Coffee Preferences",
+                note="Marcus now prefers espresso over pourover at home.",
+                related_pages=["coffee"],
+                created_at="2026-04-23T11:00:00Z",
+                conversation_ref="chat:2026-04-23T11:00:00Z",
+                fact_key="home-brew-method",
+                replacement_intent=True,
+            )
+
+            self.assertIsNotNone(first.source_path)
+            self.assertIsNotNone(second.source_path)
+            page_text = (wiki_root / "coffee-preferences.md").read_text(encoding="utf-8")
+            self.assertIn("Marcus now prefers espresso over pourover at home.", page_text)
+            self.assertNotIn("Marcus prefers pourover over espresso at home.", page_text)
+            self.assertNotIn("## Open Questions", page_text)
+            self.assertEqual(len(list((vp.CHAT_SOURCES_ROOT).glob("*.md"))), 2)
+            self.assertTrue(second.superseded_source_paths)
+            review_path = wiki_root / "review.md"
+            self.assertFalse(review_path.exists())
+
+    def test_query_writeback_chat_fact_queues_review_for_conflicting_fact(self) -> None:
+        with isolated_env() as (_, _, wiki_root, _):
+            vp.query_writeback_chat_fact(
+                page_title="Coffee Preferences",
+                note="Marcus prefers pourover over espresso at home.",
+                related_pages=["coffee"],
+                created_at="2026-04-23T10:00:00Z",
+                conversation_ref="chat:2026-04-23T10:00:00Z",
+                fact_key="home-brew-method",
+            )
+            result = vp.query_writeback_chat_fact(
+                page_title="Coffee Preferences",
+                note="Marcus prefers espresso over pourover at home.",
+                related_pages=["coffee"],
+                created_at="2026-04-23T11:00:00Z",
+                conversation_ref="chat:2026-04-23T11:00:00Z",
+                fact_key="home-brew-method",
+            )
+
+            self.assertTrue(result.review_queued)
+            page_text = (wiki_root / "coffee-preferences.md").read_text(encoding="utf-8")
+            self.assertIn("## Open Questions", page_text)
+            self.assertIn("Conflicting chat-derived fact for home-brew-method", page_text)
+            self.assertIn("Marcus prefers pourover over espresso at home.", page_text)
+            self.assertIn("Marcus prefers espresso over pourover at home.", page_text)
+
+            review_text = (wiki_root / "review.md").read_text(encoding="utf-8")
+            self.assertIn("contradiction | home-brew-method", review_text)
+            self.assertIn("[../sources/chat/", review_text)
+
     def test_capture_ingest_injects_exports_and_marks_processed(self) -> None:
         with isolated_env() as (_, raw_root, _, capture_root):
             note_path = capture_root / "Gym Plan.md"

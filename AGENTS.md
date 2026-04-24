@@ -17,7 +17,8 @@ wiki-root/
 │   └── chat/          ← immutable chat-derived source artifacts, never modify
 ├── wiki/              ← everything you build and maintain
 │   ├── index.md       ← master index of all wiki pages
-│   └── log.md         ← append-only ingest/query/lint log
+│   ├── log.md         ← append-only ingest/query/lint log
+│   └── review.md      ← actionable backlog for contradictions and deferred work
 └── capture_ingest.py  ← capture script that pulls Obsidian notes → raw/
 ```
 
@@ -49,9 +50,13 @@ Wiki pages come in two shapes:
 ## Sources
 
 - [https://example.com/article](raw/path/to/source.md) — date if known
+
+## Open Questions
+
+- Explicit unresolved contradictions or ambiguities that need review.
 ```
 
-Render `## Notes`, `## Connections`, and `## Sources` only when they have content. Never render empty sections. Do not add a boilerplate summary paragraph.
+Render `## Notes`, `## Connections`, `## Sources`, and `## Open Questions` only when they have content. Never render empty sections. Do not add a boilerplate summary paragraph.
 
 When a source note contains an external URL, the wiki must include the literal raw URL string in the wiki page itself, preferably in `## Sources`. The visible text should be the full URL, and the markdown target should point to the corresponding file in `raw/`. Do not hide external URLs behind title-only anchor text if the raw URL is known.
 
