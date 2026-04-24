@@ -1748,6 +1748,7 @@ def parse_source_line(line: str, retained_evidence: str = "") -> SourceRecord | 
     match = SOURCE_LINE_RE.match(line.strip())
     if not match:
         return None
+    label = match.group("label")
     suffix = match.group("suffix").strip()
     status = "local_only"
     if suffix == "— [⚠️ fetch failed]":
@@ -1757,13 +1758,13 @@ def parse_source_line(line: str, retained_evidence: str = "") -> SourceRecord | 
     elif suffix == "— [⚠️ dead link]":
         status = "http_dead"
     return SourceRecord(
-        label=match.group("label"),
+        label=label,
         path=match.group("path"),
         status=status,
         raw_content="",
         cleaned_text=retained_evidence,
         fetched_summary=None,
-        detected_url=None,
+        detected_url=label if label.startswith(("http://", "https://")) else None,
     )
 
 
@@ -1808,7 +1809,8 @@ def render_source_lines(page: Page) -> list[str]:
     }
     for source_path in sorted(page.sources):
         source = page.sources[source_path]
-        lines.append(f"- [{source.label}]({source_path}){suffix_map.get(source.status, '')}")
+        visible_label = source.detected_url or source.label
+        lines.append(f"- [{visible_label}]({source_path}){suffix_map.get(source.status, '')}")
     return lines
 
 

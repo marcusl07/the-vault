@@ -354,6 +354,35 @@ class BootstrapWikiTests(unittest.TestCase):
         self.assertNotIn("No sources linked yet", rendered)
         self.assertNotIn("unclassified-media-captures", rendered)
 
+    def test_render_source_lines_prefers_literal_detected_url(self) -> None:
+        source = bw.SourceRecord(
+            label="Chocolate Cake",
+            path="../raw/chocolate-cake.md",
+            status="local_only",
+            raw_content="",
+            cleaned_text="Cake recipe.",
+            fetched_summary=None,
+            detected_url="https://example.com/cake",
+        )
+        page = bw.Page(
+            slug="chocolate-cake",
+            title="Chocolate Cake",
+            page_type="Concepts",
+            summary_hint="Chocolate Cake",
+            sources={source.path: source},
+        )
+
+        self.assertEqual(
+            bw.render_source_lines(page),
+            ["- [https://example.com/cake](../raw/chocolate-cake.md)"],
+        )
+
+    def test_parse_source_line_restores_detected_url_from_literal_label(self) -> None:
+        parsed = bw.parse_source_line("- [https://example.com/cake](../raw/chocolate-cake.md)")
+
+        assert parsed is not None
+        self.assertEqual(parsed.detected_url, "https://example.com/cake")
+
     def test_atomic_page_with_only_notes_and_link_omits_sources(self) -> None:
         page = bw.Page(
             slug="example",

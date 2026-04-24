@@ -471,6 +471,57 @@ class VaultPipelineTests(unittest.TestCase):
             self.assertIn("(../raw/ics33-week1.md)", iterators_page)
             self.assertIn("(../raw/ics33-week1.md)", generators_page)
 
+    def test_ingest_fetches_remote_summary_for_url_note_and_renders_literal_url_source(self) -> None:
+        with isolated_env() as (_, raw_root, wiki_root, _):
+            raw_path = raw_root / "chocolate-cake-123.md"
+            raw_path.write_text(
+                vp.render_raw_file(
+                    capture_id="123",
+                    title="Chocolate Cake",
+                    created_at="2026-04-20T17:32:00Z",
+                    source_file="Chocolate Cake.md",
+                    body="https://example.com/cake\n\nmy short note",
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(
+                vp.bw,
+                "fetch_url_summary",
+                return_value=vp.bw.FetchResult("Chocolate Cake Recipe — Rich and easy.", "fetched"),
+            ) as fetch_mock:
+                result = vp.ingest_raw_notes([{"capture_id": "123", "raw_path": "raw/chocolate-cake-123.md"}])
+
+            self.assertEqual(result["integrated"], [{"capture_id": "123", "raw_path": "raw/chocolate-cake-123.md"}])
+            fetch_mock.assert_called_once_with("https://example.com/cake")
+            page_text = (wiki_root / "chocolate-cake.md").read_text(encoding="utf-8")
+            self.assertIn("Chocolate Cake Recipe — Rich and easy.", page_text)
+            self.assertIn("my short note", page_text)
+            self.assertIn("- [https://example.com/cake](../raw/chocolate-cake-123.md)", page_text)
+
+    def test_ingest_skips_google_search_fetch_but_preserves_literal_url_source(self) -> None:
+        with isolated_env() as (_, raw_root, wiki_root, _):
+            raw_path = raw_root / "search-123.md"
+            raw_path.write_text(
+                vp.render_raw_file(
+                    capture_id="123",
+                    title="Cake Search",
+                    created_at="2026-04-20T17:32:00Z",
+                    source_file="Cake Search.md",
+                    body="https://www.google.com/search?q=chocolate+cake\n\nlook at later",
+                ),
+                encoding="utf-8",
+            )
+
+            with mock.patch.object(vp.bw, "fetch_url_summary") as fetch_mock:
+                result = vp.ingest_raw_notes([{"capture_id": "123", "raw_path": "raw/search-123.md"}])
+
+            self.assertEqual(result["integrated"], [{"capture_id": "123", "raw_path": "raw/search-123.md"}])
+            fetch_mock.assert_not_called()
+            page_text = (wiki_root / "cake-search.md").read_text(encoding="utf-8")
+            self.assertIn("look at later", page_text)
+            self.assertIn("- [https://www.google.com/search?q=chocolate+cake](../raw/search-123.md)", page_text)
+
     def test_page_resynthesis_on_touch_rewrites_existing_page_with_shared_atomic_shape(self) -> None:
         with isolated_env() as (_, raw_root, wiki_root, _):
             existing_page = wiki_root / "topic-a.md"
