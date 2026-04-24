@@ -234,6 +234,33 @@ The intended steady-state behavior is default-on.
   - one case where a generic umbrella label is rejected or deprecated
 - If those checks pass, ship single-source splitting as the normal behavior rather than a permanent opt-in feature.
 
+Implementation Tasks
+--------------------
+Implement this spec as a sequence of atomic tasks rather than one large change.
+
+Recommended task order:
+
+1. split decision
+   - implement the decision path that determines whether one raw source should remain atomic or split
+   - expose enough intermediate reasoning or debug output to inspect candidate children, grounding, and rejection reasons during sandbox validation
+
+2. split realization during ingest or maintenance
+   - implement creation or update of child pages after a split decision
+   - implement parent-page resolution: keep atomic, convert to topic, or deprecate
+   - keep this step limited to ingest and maintenance paths first
+
+3. provenance reuse
+   - implement reuse of one raw source across multiple child pages
+   - enforce the rule that incidental mention-level support does not justify adding the source to a child page
+
+4. stability checks
+   - verify that rerunning the same unchanged source is a no-op structurally
+   - verify that near-duplicate or heavily overlapping child sets are rejected or merged according to this spec
+
+5. query-time structural writes
+   - implement split-adjacent query-time writes only after the ingest and maintenance behavior is stable
+   - keep query-time writes narrow, logged, and limited to directly affected pages
+
 Acceptance Criteria
 -------------------
 The spec is satisfied if all of the following are true:
