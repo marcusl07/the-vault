@@ -31,11 +31,24 @@ Definitions
 -----------
 For this spec:
 
-- an atomic page is one reusable idea that should be separately searchable, linkable, and maintainable
+- an atomic page is one idea that is specific enough to stand on its own and broad enough to remain useful as more sources are added
 - a split means one raw source contributes directly to two or more atomic wiki pages
 - a child page is an atomic page created or updated from a split
-- a strong child is an atomic page that would still deserve to exist even if the parent topic page did not
-- a clean compression label is a specific, non-generic parent label that accurately groups the child pages without mirroring source structure
+- a reusable idea is an idea that can be linked to directly, found directly in search, and enriched by future sources without collapsing back into a broader parent note
+- a strong child is a child page that meets the reusable-idea standard and is not merely a subsection label, storage bucket, or source-shaped wrapper
+- a clean compression label is a specific, non-generic parent label that accurately groups the child pages without mirroring source structure and without being nearly identical in meaning to one child
+
+Stability Goals
+---------------
+Single-source splitting should improve the structure of the wiki, not just increase page count.
+
+The system should preserve these invariants:
+
+- prefer fewer stronger pages over many thin pages
+- do not create sibling pages that are mostly the same idea with minor rewording
+- do not split when the child set is less stable than the original atomic page
+- repeated runs over unchanged source material should normally preserve the same split outcome
+- query-time and maintenance-time behavior should follow the same split rules
 
 Split Decision Rules
 --------------------
@@ -44,6 +57,8 @@ Split a raw note when all of the following are true:
 - the note contains two or more independently reusable ideas
 - each candidate child would be useful as its own atomic page
 - each candidate child can be grounded directly in the raw source
+- the candidate children are meaningfully distinct from one another
+- the split would produce a more stable structure than keeping the note atomic
 
 Do not require any of the following:
 
@@ -56,6 +71,9 @@ Do not split when any of the following are true:
 - the note is still one coherent atomic page despite having several subpoints
 - the proposed children are generic buckets, storage labels, or source-shaped wrappers
 - the proposed children are not grounded in the source
+- the proposed children are thin, heavily overlapping, or differ mainly by wording
+- the distinction between sibling pages cannot be explained cleanly in one sentence per sibling
+- the split would create more fragmentation than retrieval value
 
 Operational Test
 ----------------
@@ -65,11 +83,31 @@ When deciding whether to split, evaluate each candidate child page with this tes
 2. Would this idea be worth finding on its own in search?
 3. Would this idea still make sense as a stable page if the source note later gained more detail?
 
-Each proposed child page must pass at least 2 of the 3 questions above.
+Evaluate these questions against retrieval value beyond the current source note, not just local section structure inside that note.
 
-If fewer than 2 proposed child pages meet that threshold, do not split.
+Each proposed child page must pass questions 1 and 3.
+
+Question 2 is a useful corroborating signal, not a substitute for the other two.
+
+If fewer than 2 proposed child pages pass that threshold, do not split.
 
 If one candidate passes and another fails, do not split into that pair as proposed. Either keep the note atomic or revise the candidate set to include only child pages that independently satisfy the split rules.
+
+Minimum substance rule:
+
+- Do not create a child page when the source supports only a passing mention or a single incidental sentence about that idea.
+- Each child page must be supported by enough source material to justify at least one meaningful note or fact on that page.
+
+Anti-fragmentation rule:
+
+- Prefer the smallest child set that captures the durable distinctions in the source.
+- Do not split a source into many children when a smaller number of stronger children would preserve the same retrieval value.
+
+Overlap rule:
+
+- Child pages may share the same source.
+- Child pages should not substantially duplicate each other's notes.
+- If two proposed children overlap so heavily that their distinction is unstable, merge them or keep the parent atomic.
 
 Examples
 --------
@@ -96,6 +134,7 @@ One raw source may support multiple atomic pages.
 - Each child page should list the raw source directly when that source grounds the child page.
 - Do not force one raw source to have exactly one owning wiki page.
 - Do not hide provenance only on the parent topic page.
+- Do not list the same raw source on a child page when that source contributes only incidental mention-level support.
 
 If the raw source includes an external URL and a child page is grounded in that source, the child page should include the literal URL in `## Sources` following the normal wiki source-format rules.
 
@@ -116,6 +155,7 @@ Topic-page rule:
 - Topic pages may exist with 2 or more strong child pages.
 - The parent label must be specific, clean, and non-generic.
 - Do not create or preserve topic pages with generic labels such as `notes`, `misc`, `week-3`, `lecture-5`, or similar source-shaped buckets.
+- Do not create a topic page when the parent label is nearly synonymous with one child page.
 
 If the original parent label is generic or source-shaped, do not preserve it as a topic page just because a split occurred.
 
@@ -133,6 +173,10 @@ Deprecation here means:
 - add a brief note at the top that the page has been superseded by more atomic children
 - link directly to the replacement child pages
 
+Recommended deprecation note format:
+
+- `Deprecated: superseded by [[child-a]] and [[child-b]].`
+
 Implication:
 
 - the general wiki rule is no longer "topic pages require at least 3 children"
@@ -146,14 +190,24 @@ Single-source splitting should be available wherever the wiki is actively mainta
 - It should also be available in maintenance paths that revisit existing wiki pages.
 - It should not be treated as bootstrap-only behavior.
 
+Idempotency And Re-evaluation
+-----------------------------
+The split decision should be stable under repeated runs.
+
+- Re-running ingest or maintenance on unchanged source material must preserve the same page structure unless the previous structure violates the current split rules.
+- Do not re-split an unchanged source into a different child set unless the previous structure is clearly deficient under the current split rules.
+- New sources may justify later refinement, but unchanged evidence alone should not cause routine oscillation between atomic and split forms.
+- If the best boundary between children remains unclear after applying the split rules, prefer the more stable structure, which is usually to keep the note atomic or use fewer children.
+
 Query-Time Behavior
 -------------------
 Queries may produce durable wiki updates, but only narrowly.
 
-- A query may trigger a split or related structural fix when there is a clear structural deficiency in the existing wiki and the change is strongly grounded in existing sources.
+- A query may trigger a split or related structural fix only when there is a clear structural deficiency in the existing wiki and the change is strongly grounded in existing sources.
 - Query-time writes should be narrow and auditable, not broad opportunistic maintenance.
 - Query-time writes must not modify `raw/`.
 - Query-time writes should remain logged as `query` entries with a short mutation note.
+- Query-time writes should affect only the pages directly involved in the split and its immediate parent/child structure.
 
 For this spec, a related structural fix means split-adjacent work only, such as:
 
@@ -162,6 +216,8 @@ For this spec, a related structural fix means split-adjacent work only, such as:
 - updating links among the affected parent and child pages
 
 It does not include broad discovery of unrelated new pages during query handling.
+
+If query-time confidence is not high enough to choose stable child boundaries, do not mutate structure during the query.
 
 This allows the wiki to improve through use without turning query execution into unrestricted background maintenance.
 
@@ -190,6 +246,10 @@ The spec is satisfied if all of the following are true:
 - a 2-child topic page is allowed when the parent label is a strong, non-generic compression
 - generic parent labels are still rejected
 - query-time structural writes, when they occur, are narrow, grounded, and logged
+- a coherent atomic note is not split solely because it is long or has headings
+- sibling child pages are meaningfully distinct rather than near-duplicates
+- incidental mention-level grounding does not by itself create a child page or source entry
+- unchanged source material does not normally cause repeated restructuring into different child sets
 
 Non-Goals
 ---------
@@ -197,3 +257,4 @@ Non-Goals
 - requiring heading-based extraction only
 - preserving source-shaped umbrella pages when they are not real atomic notes
 - turning query-time behavior into unrestricted whole-wiki maintenance
+- defining full cross-source conflict resolution or whole-wiki de-duplication policy
