@@ -1821,8 +1821,19 @@ def build_simple_notes_markdown(page: Page) -> str:
         if stripped and not any(pattern.fullmatch(stripped) for pattern in BOILERPLATE_PATTERNS):
             return stripped
 
+    note_candidates = ordered_unique([note for note in page.notes if note.strip()])
     if len(page.sources) == 1:
         source = next(iter(page.sources.values()))
+        excerpt = compact_source_text(source, limit=220).strip()
+        normalized_excerpt = re.sub(r"\s+", " ", excerpt)
+        synthesized_notes = [
+            note
+            for note in note_candidates
+            if re.sub(r"\s+", " ", note.strip()) != normalized_excerpt
+        ]
+        if synthesized_notes:
+            return "\n".join(f"- {note}" for note in note_candidates[:60])
+
         body_parts = []
         if source.fetched_summary:
             body_parts.append(source.fetched_summary)
@@ -1832,7 +1843,6 @@ def build_simple_notes_markdown(page: Page) -> str:
         if body:
             return body if ("\n" in body or re.search(r"^(?:#|-|\d+\.)", body, flags=re.M)) else f"- {body}"
 
-    note_candidates = ordered_unique([note for note in page.notes if note.strip()])
     if note_candidates:
         return "\n".join(f"- {note}" for note in note_candidates[:60])
 
@@ -2115,6 +2125,15 @@ def connect_pages(pages: dict[str, Page], left: str, right: str) -> None:
 def gather_split_source_groups(page: Page, split_decision: PageSplitDecision) -> tuple[dict[str, list[SourceRecord]], set[str]]:
     source_groups: dict[str, list[SourceRecord]] = defaultdict(list)
     assigned_source_paths: set[str] = set()
+    if len(page.sources) == 1:
+        grounded_child_slugs = grounded_split_candidate_slugs(split_decision)
+        if len(grounded_child_slugs) >= 2:
+            source = next(iter(page.sources.values()))
+            for child_slug in grounded_child_slugs:
+                source_groups[child_slug].append(source)
+            assigned_source_paths.add(source.path)
+            return source_groups, assigned_source_paths
+
     for source_path, assigned_slug in split_decision.source_assignments.items():
         source = page.sources.get(source_path)
         if source is not None:
@@ -2134,6 +2153,17 @@ def gather_split_source_groups(page: Page, split_decision: PageSplitDecision) ->
 
 def split_candidate_evaluation_map(split_decision: PageSplitDecision) -> dict[str, SplitCandidateEvaluation]:
     return {evaluation.slug: evaluation for evaluation in split_decision.candidate_evaluations if evaluation.accepted}
+
+
+def grounded_split_candidate_slugs(split_decision: PageSplitDecision) -> list[str]:
+    evaluation_map = split_candidate_evaluation_map(split_decision)
+    grounded_slugs: list[str] = []
+    for child_slug in ordered_unique(split_decision.candidate_satellite_slugs):
+        evaluation = evaluation_map.get(child_slug)
+        if evaluation is None or not evaluation.grounding:
+            continue
+        grounded_slugs.append(child_slug)
+    return grounded_slugs
 
 
 def build_split_child_notes(split_decision: PageSplitDecision, child_slug: str) -> list[str]:
