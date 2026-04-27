@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 
 def _resolve_repo_relative_path(api: ModuleType, path: str) -> Path:
     normalized = path[3:] if path.startswith("../") else path
+    normalized = unquote(normalized)
     resolved = (api.ROOT / normalized).resolve()
     root_resolved = api.ROOT.resolve()
     if Path(os.path.commonpath([root_resolved, resolved])) != root_resolved:

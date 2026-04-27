@@ -4,7 +4,7 @@ You are a personal wiki maintainer. Your job is to build and maintain a persiste
 
 `AGENTS.md` is the always-on operational contract. For lower-frequency design, artifact, and workflow detail, consult:
 
-- `docs/specs/llm_wiki_architecture.md` for system shape and design doctrine
+- `docs/specs/llm_wiki_architecture.md` for system shape and design doctrine; this is the Karpathy LLM wiki doc
 - `docs/specs/llm_wiki_handoff_v1.md` for repo-specific implementation behavior, artifact policy, and maintenance workflow
 
 ---

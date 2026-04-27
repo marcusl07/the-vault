@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import Counter
 from pathlib import Path
 from types import ModuleType
 import re
@@ -24,12 +23,31 @@ def parse_note_snippets(api: ModuleType, note_lines: list[str]) -> list[str]:
     return snippets
 
 
-def parse_source_line(api: ModuleType, line: str, retained_evidence: str = "") -> object | None:
-    match = api.SOURCE_LINE_RE.match(line.strip())
+def parse_markdown_source_link(line: str) -> tuple[str, str, str] | None:
+    stripped = line.strip()
+    match = re.match(r"^- \[(?P<label>[^\]]+)\]\((?P<rest>.*)$", stripped)
     if not match:
         return None
     label = match.group("label")
-    suffix = match.group("suffix").strip()
+    rest = match.group("rest")
+    if rest.startswith("<"):
+        end_index = rest.find(">)")
+        if end_index == -1:
+            return None
+        return label, rest[1:end_index], rest[end_index + 2 :]
+
+    end_index = rest.rfind(")")
+    if end_index == -1:
+        return None
+    return label, rest[:end_index], rest[end_index + 1 :]
+
+
+def parse_source_line(api: ModuleType, line: str, retained_evidence: str = "") -> object | None:
+    parsed_link = parse_markdown_source_link(line)
+    if parsed_link is None:
+        return None
+    label, path, suffix = parsed_link
+    suffix = suffix.strip()
     status = "local_only"
     if suffix == "— [⚠️ fetch failed]":
         status = "fetch_failed"
@@ -39,13 +57,13 @@ def parse_source_line(api: ModuleType, line: str, retained_evidence: str = "") -
         status = "http_dead"
     return api.SourceRecord(
         label=label,
-        path=match.group("path"),
+        path=path,
         status=status,
         raw_content="",
         cleaned_text=retained_evidence,
         fetched_summary=None,
         detected_url=label if label.startswith(("http://", "https://")) else None,
-        source_kind="chat" if match.group("path").startswith("../sources/chat/") else "capture",
+        source_kind="chat" if path.startswith("../sources/chat/") else "capture",
         title=label,
         external_url=label if label.startswith(("http://", "https://")) else None,
     )

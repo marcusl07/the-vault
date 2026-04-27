@@ -89,6 +89,7 @@ def run_split_only(api: ModuleType, *, api_key: str | None, model: str, target_s
 def main(api: ModuleType) -> None:
     parser = api.argparse.ArgumentParser()
     parser.add_argument("--fetch-urls", action="store_true", help="Fetch remote title/meta for URL notes.")
+    parser.add_argument("--only-youtube", action="store_true", help="Process only raw markdown notes containing YouTube URLs.")
     parser.add_argument("--split-only", action="store_true", help="Retry page splitting using the existing wiki only.")
     parser.add_argument("--pages", help="Comma-separated page slugs to target during split-only mode.")
     parser.add_argument(
@@ -112,11 +113,19 @@ def main(api: ModuleType) -> None:
     pages: dict[str, object] = {}
     existing_pages = api.load_existing_wiki_pages()
     markdown_files = sorted(path for path in api.RAW_ROOT.rglob("*.md") if path.is_file())
-    media_files = sorted(
-        path
-        for path in api.RAW_ROOT.rglob("*")
-        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".heic", ".pdf"}
-    )
+    if args.only_youtube:
+        markdown_files = [
+            path
+            for path in markdown_files
+            if any(api.is_youtube_url(url) for url in api.extract_urls(path.read_text(errors="ignore")))
+        ]
+        media_files = []
+    else:
+        media_files = sorted(
+            path
+            for path in api.RAW_ROOT.rglob("*")
+            if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".heic", ".pdf"}
+        )
 
     embedded_media = set()
     url_stats = api.Counter()
@@ -255,10 +264,19 @@ def main(api: ModuleType) -> None:
         )
 
     api.merge_existing_pages(pages, existing_pages)
-    api.update_manifest(phase="split", split_phase={"status": "starting"}, failure=None)
-    split_report = api.migrate_pages_to_atomic_topics(pages, existing_pages, api_key=api_key, model=model)
-    split_manifest = api.split_report_manifest_payload(split_report)
-    api.update_manifest(phase="split", split_phase=split_manifest, failure=split_report.reason)
+    if args.only_youtube:
+        split_report = api.SplitPhaseReport(
+            mode="skipped",
+            status="skipped",
+            reason="only-youtube mode skips global split analysis",
+        )
+        split_manifest = api.split_report_manifest_payload(split_report)
+        api.update_manifest(phase="split", split_phase=split_manifest, failure=None)
+    else:
+        api.update_manifest(phase="split", split_phase={"status": "starting"}, failure=None)
+        split_report = api.migrate_pages_to_atomic_topics(pages, existing_pages, api_key=api_key, model=model)
+        split_manifest = api.split_report_manifest_payload(split_report)
+        api.update_manifest(phase="split", split_phase=split_manifest, failure=split_report.reason)
     api.prune_generic_media_links(pages)
     api.ensure_meaningful_connections(pages)
     api.finalize_page_shapes(pages)

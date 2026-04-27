@@ -516,6 +516,39 @@ class VaultPipelineTests(unittest.TestCase):
             self.assertIn("lint | dead-citation", review_text)
             self.assertIn("lint | contradiction-candidate", review_text)
 
+    def test_lint_resolves_percent_encoded_source_paths(self) -> None:
+        with isolated_env() as (_, raw_root, wiki_root, _):
+            raw_path = raw_root / "Apple Notes" / "Programming Note.md"
+            raw_path.parent.mkdir(parents=True)
+            raw_path.write_text("# Programming Note\n", encoding="utf-8")
+            (wiki_root / "programming-note.md").write_text(
+                "\n".join(
+                    [
+                        "# Programming Note",
+                        "",
+                        "## Notes",
+                        "",
+                        "- A source-backed note.",
+                        "",
+                        "## Connections",
+                        "",
+                        "- [[programming]]",
+                        "",
+                        "## Sources",
+                        "",
+                        "- [Programming Note](../raw/Apple%20Notes/Programming%20Note.md)",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (wiki_root / "programming.md").write_text("# Programming\n\n## Connections\n\n- [[programming-note]]\n", encoding="utf-8")
+
+            report = vp.lint_wiki(append_review=False)
+
+            findings = {(finding.kind, finding.slug) for finding in report.findings}
+            self.assertNotIn(("dead-citation", "programming-note"), findings)
+
     def test_trace_page_provenance_maps_note_to_persisted_source_artifact(self) -> None:
         with isolated_env() as (_, _, wiki_root, _):
             result = vp.query_writeback_chat_fact(
@@ -1016,6 +1049,49 @@ class VaultPipelineTests(unittest.TestCase):
             generators_page = (wiki_root / "generators.md").read_text(encoding="utf-8")
             self.assertIn("(../raw/ics33-week1.md)", iterators_page)
             self.assertIn("(../raw/ics33-week1.md)", generators_page)
+
+    def test_ingest_rejects_single_source_split_with_identical_child_notes(self) -> None:
+        with isolated_env() as (_, raw_root, wiki_root, _):
+            raw_path = raw_root / "recipe-list.md"
+            raw_path.write_text(
+                vp.render_raw_file(
+                    capture_id="123",
+                    title="Recipe List",
+                    created_at="2026-04-20T17:32:00Z",
+                    source_file="Recipe List.md",
+                    body="Soba noodles are served chilled. Ponzu sauce adds citrus and soy.",
+                ),
+                encoding="utf-8",
+            )
+
+            decision = vp.bw.PageSplitDecision(
+                is_atomic=False,
+                candidate_satellite_slugs=["soba-noodles", "ponzu-sauce"],
+                candidate_evaluations=[
+                    vp.bw.SplitCandidateEvaluation(
+                        slug="soba-noodles",
+                        accepted=True,
+                        grounding=["Recipe List"],
+                        passes_direct_link_test=True,
+                        passes_stable_page_test=True,
+                    ),
+                    vp.bw.SplitCandidateEvaluation(
+                        slug="ponzu-sauce",
+                        accepted=True,
+                        grounding=["Recipe List"],
+                        passes_direct_link_test=True,
+                        passes_stable_page_test=True,
+                    ),
+                ],
+            )
+
+            with mock.patch.object(vp, "_resolve_synthesis_config", return_value=("token", "gemini-test")):
+                with mock.patch.object(vp.bw, "analyze_page_for_atomic_split", return_value=decision):
+                    result = vp.ingest_raw_notes([{"capture_id": "123", "raw_path": "raw/recipe-list.md"}])
+
+            self.assertEqual(result["integrated"], [{"capture_id": "123", "raw_path": "raw/recipe-list.md"}])
+            self.assertFalse((wiki_root / "soba-noodles.md").exists())
+            self.assertFalse((wiki_root / "ponzu-sauce.md").exists())
 
     def test_ingest_fetches_remote_summary_for_url_note_and_renders_literal_url_source(self) -> None:
         with isolated_env() as (_, raw_root, wiki_root, _):

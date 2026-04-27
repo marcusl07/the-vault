@@ -36,8 +36,14 @@ def render_source_lines(api: ModuleType, page: object) -> list[str]:
     for source_path in sorted(page.sources):
         source = page.sources[source_path]
         visible_label = source.external_url or source.detected_url or source.label
-        lines.append(f"- [{visible_label}]({source_path}){suffix_map.get(source.status, '')}")
+        lines.append(f"- [{visible_label}]({format_markdown_link_target(source_path)}){suffix_map.get(source.status, '')}")
     return lines
+
+
+def format_markdown_link_target(target: str) -> str:
+    if re.search(r"[\s()<>\"]", target):
+        return f"<{target}>"
+    return target
 
 
 def build_simple_notes_markdown(api: ModuleType, page: object) -> str:

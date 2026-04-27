@@ -853,8 +853,14 @@ def score_bucket_signals(page: Page) -> BucketSignalResult:
     return splitting_impl.score_bucket_signals(_api(), page)
 
 
-def add_source_to_page(page: Page, source: SourceRecord, seed_kind: str = "migration") -> None:
-    splitting_impl.add_source_to_page(_api(), page, source, seed_kind)
+def add_source_to_page(
+    page: Page,
+    source: SourceRecord,
+    seed_kind: str = "migration",
+    *,
+    append_excerpt: bool = True,
+) -> None:
+    splitting_impl.add_source_to_page(_api(), page, source, seed_kind, append_excerpt=append_excerpt)
 
 
 def connect_pages(pages: dict[str, Page], left: str, right: str) -> None:
@@ -875,6 +881,22 @@ def grounded_split_candidate_slugs(split_decision: PageSplitDecision) -> list[st
 
 def build_split_child_notes(split_decision: PageSplitDecision, child_slug: str) -> list[str]:
     return splitting_impl.build_split_child_notes(split_decision, child_slug)
+
+
+def normalize_split_note_text(text: str) -> str:
+    return splitting_impl.normalize_split_note_text(text)
+
+
+def split_child_note_signature(split_decision: PageSplitDecision, child_slug: str) -> str:
+    return splitting_impl.split_child_note_signature(split_decision, child_slug)
+
+
+def validate_split_child_grounding(
+    page: Page,
+    split_decision: PageSplitDecision,
+    source_groups: dict[str, list[SourceRecord]],
+) -> PageSplitDecision:
+    return splitting_impl.validate_split_child_grounding(_api(), page, split_decision, source_groups)
 
 
 def page_title_is_source_shaped(page: Page) -> bool:
@@ -926,6 +948,12 @@ def apply_query_time_split_fix(
             return False
 
     source_groups, assigned_source_paths = gather_split_source_groups(parent_page, split_decision)
+    split_decision = validate_split_child_grounding(parent_page, split_decision, source_groups)
+    child_slugs = ordered_unique(split_decision.candidate_satellite_slugs)
+    if split_decision.is_atomic or len(child_slugs) < 2:
+        return False
+
+    source_groups, assigned_source_paths = gather_split_source_groups(parent_page, split_decision)
     if parent_page.sources and len(parent_page.sources) > 1:
         if len(assigned_source_paths) != len(parent_page.sources) or len(source_groups) < 2:
             return False
@@ -960,11 +988,12 @@ def apply_query_time_split_fix(
         child_page.seed_kinds.add(seed_kind)
         child_page.topic_parent = parent_slug if parent_mode == PAGE_SHAPE_TOPIC else None
 
-        for note in build_split_child_notes(split_decision, child_slug):
+        split_notes = build_split_child_notes(split_decision, child_slug)
+        for note in split_notes:
             if note not in child_page.notes:
                 child_page.notes.append(note)
         for source in source_groups.get(child_slug, []):
-            add_source_to_page(child_page, source, seed_kind)
+            add_source_to_page(child_page, source, seed_kind, append_excerpt=not bool(split_notes))
         connect_pages(pages, parent_slug, child_slug)
     return True
 
