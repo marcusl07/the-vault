@@ -52,3 +52,5 @@
 - Replaced cloned book-page notes with source-specific book facts and tighter links.
 - Expanded [[books]] as the topic hub for the affected book-note cluster.
 - Tightened query-time split repair so cloned source-label children are rejected and source excerpts are not appended when split children already have grounded notes.
+
+## [2026-04-27] maintenance | duplicate-note cleanup | Pages rewritten: 1234 initial cleanup, 116 structure repairs, 19 residual duplicate fixes | Whole-note duplicates: 605 -> 0 | Duplicate bullet groups: 1037 -> 0 | Source-specific notes restored: 703
