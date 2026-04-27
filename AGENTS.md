@@ -115,6 +115,15 @@ When asked to lint, look for:
 
 Report findings. Do not auto-fix without asking first.
 
+### Git And Publishing
+
+- This private repository is the canonical source of truth.
+- After changing code, docs, or wiki files in this repo, commit and push the private repo unless Marcus explicitly says not to.
+- Do not include unrelated working-tree changes in an agent commit. Stage only the files the agent intentionally changed for the task.
+- Keep `raw/`, `sources/chat/`, and `wiki/` private. Never push them directly to the public repo.
+- For code-related changes, also sync, commit, and push the filtered public repo according to `docs/specs/llm_wiki_handoff_v1.md`.
+- If the public repo path or publish command is unclear, commit and push the private repo, then report that public publishing is blocked.
+
 ---
 
 ## Linking Philosophy
